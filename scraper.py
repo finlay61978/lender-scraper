@@ -4,82 +4,98 @@ from urllib.parse import urljoin
 import re
 import logging
 
+# For JS rendering fallback
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+
 logging.basicConfig(level=logging.INFO)
+
 HEADERS = {"User-Agent": "MortgageBot/1.0 (+mailto:you@example.com)"}
 
-
+# --------------------------
+# Normal requests fetch
+# --------------------------
 def fetch(url):
-    """Fetch a page, return empty string if it fails, and log the error."""
-    logging.info(f"Fetching {url}")
+    logging.info(f"Fetching {url} with requests")
+    r = requests.get(url, headers=HEADERS, timeout=20)
+    r.raise_for_status()
+    return r.text
+
+# --------------------------
+# JS-rendered fetch fallback
+# --------------------------
+def fetch_js(url):
+    logging.info(f"Fetching {url} with Playwright (JS-rendered)")
     try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
-        r.raise_for_status()
-        return r.text
-    except requests.exceptions.HTTPError as e:
-        logging.error(f"HTTP error {e} for {url}")
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Request failed for {url}: {e}")
-    return ""  # return empty string if fetch fails
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, timeout=30000)
+            html = page.content()
+            browser.close()
+            return html
+    except PlaywrightTimeout as e:
+        logging.error(f"Playwright timed out for {url}: {e}")
+        return ""
 
-
+# --------------------------
+# Clean text
+# --------------------------
 def clean(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
-
+# --------------------------
+# Extract text from page
+# --------------------------
 def extract_text_from_page(url):
-    """Extract headings, paragraphs, bullet points from a page"""
-    html = fetch(url)
-    if not html:
-        return []  # skip empty/failure pages
-    soup = BeautifulSoup(html, "html.parser")
+    try:
+        html = fetch(url)
+    except Exception as e:
+        logging.warning(f"Requests fetch failed for {url}: {e}")
+        html = fetch_js(url)
+        if not html:
+            logging.error(f"Could not fetch page even with JS render: {url}")
+            return []
 
+    soup = BeautifulSoup(html, "html.parser")
     content = []
+
     for elem in soup.select("h1, h2, h3, h4, p, li"):
         txt = clean(elem.get_text())
         if txt:
             content.append(txt)
+
+    if not content:
+        logging.warning(f"No content found at {url}")
     return content
 
-
+# --------------------------
+# Get internal subpages
+# --------------------------
 def get_internal_links(start_url, base_url):
-    """Find subpages under the same domain (only within start URL path)."""
     html = fetch(start_url)
-    if not html:
-        return []  # skip if start page failed
     soup = BeautifulSoup(html, "html.parser")
     links = []
     for a in soup.select("a"):
         href = a.get("href")
         if href and href.startswith("/"):
             full = urljoin(base_url, href)
-            if start_url.split("/")[3] in full:  # only include relevant section
-                if full not in links:
-                    links.append(full)
+            if start_url.split("/")[3] in full and full not in links:
+                links.append(full)
     return links
 
-
+# --------------------------
+# Scrape a lender site
+# --------------------------
 def scrape_site(start_url, bank_name="Unknown Bank"):
-    """Scrape main page + subpages for one lender"""
     all_text = {}
+    all_text["main"] = extract_text_from_page(start_url)
 
-    # main page
-    main_content = extract_text_from_page(start_url)
-    if main_content:
-        all_text["main"] = main_content
-    else:
-        logging.warning(f"Main page content empty or failed for {bank_name} ({start_url})")
-
-    # try to get subpages
     base = start_url.split("/home/")[0] if "/home/" in start_url else start_url
     subpages = get_internal_links(start_url, base)
     for sp in subpages:
         key = sp.replace(start_url, "").strip("/") or "overview"
-        sub_content = extract_text_from_page(sp)
-        if sub_content:
-            all_text[key] = sub_content
-        else:
-            logging.warning(f"Subpage empty or failed: {sp}")
+        all_text[key] = extract_text_from_page(sp)
 
     return {
         "bank": bank_name,
