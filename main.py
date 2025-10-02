@@ -1,20 +1,20 @@
 import os
 from scraper import scrape_site
 
+# Output configuration
 OUTPUT_DIR = "output"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "Lender_scrape_export.txt")
 LENDERS_FILE = "lenders.txt"
 
+# Ensure output folder exists
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def load_lenders():
+    """Load lender URLs from lenders.txt"""
     with open(LENDERS_FILE, "r", encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip()]
 
-
 def run():
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
-
     lenders = load_lenders()
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
@@ -31,7 +31,6 @@ def run():
                 f.write("\n\n")
 
     print(f"✅ Scrape complete. Results saved to {OUTPUT_FILE}")
-
 
 if __name__ == "__main__":
     run()
