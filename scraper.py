@@ -3,8 +3,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import re
 import logging
-
-# For JS rendering fallback
+from sklearn.feature_extraction.text import TfidfVectorizer
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
 logging.basicConfig(level=logging.INFO)
@@ -12,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 HEADERS = {"User-Agent": "MortgageBot/1.0 (+mailto:you@example.com)"}
 
 # --------------------------
-# Normal requests fetch
+# Fetch HTML normally
 # --------------------------
 def fetch(url):
     logging.info(f"Fetching {url} with requests")
@@ -21,7 +20,7 @@ def fetch(url):
     return r.text
 
 # --------------------------
-# JS-rendered fetch fallback
+# Fetch HTML with JS rendering
 # --------------------------
 def fetch_js(url):
     logging.info(f"Fetching {url} with Playwright (JS-rendered)")
@@ -45,7 +44,7 @@ def clean(text: str) -> str:
     return text.strip()
 
 # --------------------------
-# Extract text from page
+# Extract main text from page
 # --------------------------
 def extract_text_from_page(url):
     try:
@@ -73,14 +72,19 @@ def extract_text_from_page(url):
 # Get internal subpages
 # --------------------------
 def get_internal_links(start_url, base_url):
-    html = fetch(start_url)
+    try:
+        html = fetch(start_url)
+    except Exception as e:
+        logging.warning(f"Failed to fetch for internal links {start_url}: {e}")
+        return []
+
     soup = BeautifulSoup(html, "html.parser")
     links = []
     for a in soup.select("a"):
         href = a.get("href")
         if href and href.startswith("/"):
             full = urljoin(base_url, href)
-            if start_url.split("/")[3] in full and full not in links:
+            if full not in links:
                 links.append(full)
     return links
 
@@ -89,16 +93,44 @@ def get_internal_links(start_url, base_url):
 # --------------------------
 def scrape_site(start_url, bank_name="Unknown Bank"):
     all_text = {}
-    all_text["main"] = extract_text_from_page(start_url)
+    main_content = extract_text_from_page(start_url)
+    if not main_content:
+        logging.error(f"Skipping {bank_name}, main page empty")
+        return None
+    all_text["main"] = main_content
 
     base = start_url.split("/home/")[0] if "/home/" in start_url else start_url
     subpages = get_internal_links(start_url, base)
     for sp in subpages:
         key = sp.replace(start_url, "").strip("/") or "overview"
-        all_text[key] = extract_text_from_page(sp)
+        sub_content = extract_text_from_page(sp)
+        if sub_content:
+            all_text[key] = sub_content
 
     return {
         "bank": bank_name,
         "source": start_url,
         "sections": all_text
     }
+
+# --------------------------
+# Split text into chunks
+# --------------------------
+def chunk_text(text, chunk_size=500):
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), chunk_size):
+        chunks.append(" ".join(words[i:i+chunk_size]))
+    return chunks
+
+# --------------------------
+# Extract dynamic keywords
+# --------------------------
+def extract_keywords(texts, top_n=10):
+    vectorizer = TfidfVectorizer(ngram_range=(1,2), stop_words='english')
+    tfidf_matrix = vectorizer.fit_transform(texts)
+    scores = tfidf_matrix.sum(axis=0)
+    words = vectorizer.get_feature_names_out()
+    word_scores = [(words[i], scores[0,i]) for i in range(len(words))]
+    word_scores.sort(key=lambda x: x[1], reverse=True)
+    return [w for w, _ in word_scores[:top_n]]
