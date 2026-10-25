@@ -1,4 +1,7 @@
+# One lender criteria page per line: <start url> [scope]
+# The optional scope is a path prefix; only subpages under it are crawled.
+# Without one, the crawler stays inside the start page's own folder.
 https://intermediaries.uk.barclays/home/lending-criteria/residential/
-https://www.halifax-intermediaries.co.uk/criteria.html
 https://intermediaries.uk.barclays/home/lending-criteria/buy-to-let/
+https://www.halifax-intermediaries.co.uk/criteria.html /criteria
 https://www.nationwide-intermediary.co.uk/lending-criteria/a-z

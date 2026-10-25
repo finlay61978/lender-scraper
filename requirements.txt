@@ -1,0 +1,4 @@
+requests
+beautifulsoup4
+scikit-learn
+playwright  # optional: only used for pages that need JavaScript to render
